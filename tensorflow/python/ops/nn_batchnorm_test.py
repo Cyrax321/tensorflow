@@ -693,6 +693,134 @@ class WeightedMomentsTest(MomentsTest):
       self.assertAllCloseAccordingToType(expected_mean, mean_v)
       self.assertAllCloseAccordingToType(expected_variance, var_v)
 
+  def testTensorAxesKeepdimsFalse(self):
+    """Regression test for GitHub issue #101580.
+
+    tf.nn.weighted_moments should work when `axes` is a tf.Tensor, not just a
+    Python list of ints.  The bug caused a TypeError from squeeze_eager_fallback
+    because it requires axis to be a list or tuple, not a tf.Tensor.  The fix
+    normalizes a constant-valued tf.Tensor axes to a Python list before squeeze.
+    """
+    x = constant_op.constant(
+        [[1.0, 2.0, 3.0], [4.0, 5.0, 6.0]], dtype=dtypes.float32)
+    w = constant_op.constant(
+        [[1.0, 1.0, 1.0], [1.0, 1.0, 1.0]], dtype=dtypes.float32)
+
+    # axes as a tf.Tensor - this is the failing case before the fix
+    axes_tensor = constant_op.constant([1], dtype=dtypes.int32)
+    mean, var = nn_impl.weighted_moments(
+        x, axes_tensor, w, keep_dims=False)
+
+    self.assertAllEqual(mean.shape, [2])
+    self.assertAllEqual(var.shape, [2])
+    self.assertAllClose(mean, [2.0, 5.0])
+    self.assertAllClose(var, [2.0 / 3.0, 2.0 / 3.0])
+
+  def testTensorAxesKeepdimsFalseAxis0(self):
+    """Test with axes=[0] as a tf.Tensor and keepdims=False."""
+    x = constant_op.constant(
+        [[1.0, 2.0, 3.0], [4.0, 5.0, 6.0]], dtype=dtypes.float32)
+    w = constant_op.constant(
+        [[1.0, 1.0, 1.0], [1.0, 1.0, 1.0]], dtype=dtypes.float32)
+
+    axes_tensor = constant_op.constant([0], dtype=dtypes.int32)
+    mean, var = nn_impl.weighted_moments(
+        x, axes_tensor, w, keep_dims=False)
+
+    self.assertAllEqual(mean.shape, [3])
+    self.assertAllEqual(var.shape, [3])
+    self.assertAllClose(mean, [2.5, 3.5, 4.5])
+
+  def testTensorAxesKeepdimsTrue(self):
+    """When keepdims=True, squeeze is skipped; tf.Tensor axes should work."""
+    x = constant_op.constant(
+        [[1.0, 2.0, 3.0], [4.0, 5.0, 6.0]], dtype=dtypes.float32)
+    w = constant_op.constant(1.0, dtype=dtypes.float32)
+
+    axes_tensor = constant_op.constant([1], dtype=dtypes.int32)
+    mean, var = nn_impl.weighted_moments(
+        x, axes_tensor, w, keep_dims=True)
+
+    # keepdims=True keeps the reduced dimension as size 1
+    self.assertAllEqual(mean.shape, [2, 1])
+    self.assertAllEqual(var.shape, [2, 1])
+    self.assertAllClose(mean, [[2.0], [5.0]])
+
+  def testListAxesKeepdimsFalse(self):
+    """Plain Python list axes continue to work correctly after the fix."""
+    x = constant_op.constant(
+        [[1.0, 2.0, 3.0], [4.0, 5.0, 6.0]], dtype=dtypes.float32)
+    w = constant_op.constant(1.0, dtype=dtypes.float32)
+
+    mean, var = nn_impl.weighted_moments(x, [1], w, keep_dims=False)
+
+    self.assertAllEqual(mean.shape, [2])
+    self.assertAllClose(mean, [2.0, 5.0])
+
+  def testNumpyArrayAxesKeepdimsFalse(self):
+    """Verifies that axes passed as a numpy.ndarray are accepted.
+
+    `tf.nn.weighted_moments` documents `axes` as a 1-D tensor of int32
+    values, which includes numpy arrays.  This test ensures the function
+    does not raise when `axes` is of type `numpy.ndarray` with
+    `keepdims=False`.
+    """
+    x = constant_op.constant(
+        [[1.0, 2.0, 3.0], [4.0, 5.0, 6.0]], dtype=dtypes.float32)
+    w = constant_op.constant(1.0, dtype=dtypes.float32)
+
+    axes_numpy = np.array([1], dtype=np.int32)
+    mean, var = nn_impl.weighted_moments(
+        x, axes_numpy, w, keep_dims=False)
+
+    self.assertAllEqual(mean.shape, [2])
+    self.assertAllEqual(var.shape, [2])
+    self.assertAllClose(mean, [2.0, 5.0])
+    self.assertAllClose(var, [2.0 / 3.0, 2.0 / 3.0])
+
+  def testScalarTensorAxesKeepdimsFalse(self):
+    """Verifies that a 0-D (scalar) tf.Tensor is accepted as axes.
+
+    When `axes` is a scalar tensor (rank 0), `tensor_util.constant_value`
+    returns a numpy scalar whose `.tolist()` produces a Python `int` rather
+    than a `list`.  `tf.squeeze` accepts an integer axis argument, so the
+    result must be numerically identical to passing the same axis as a list.
+    """
+    x = constant_op.constant(
+        [[1.0, 2.0, 3.0], [4.0, 5.0, 6.0]], dtype=dtypes.float32)
+    w = constant_op.constant(1.0, dtype=dtypes.float32)
+
+    axes_scalar = constant_op.constant(1, dtype=dtypes.int32)
+    mean, var = nn_impl.weighted_moments(
+        x, axes_scalar, w, keep_dims=False)
+
+    self.assertAllEqual(mean.shape, [2])
+    self.assertAllEqual(var.shape, [2])
+    self.assertAllClose(mean, [2.0, 5.0])
+    self.assertAllClose(var, [2.0 / 3.0, 2.0 / 3.0])
+
+  def testMultiAxisTensorKeepdimsFalse(self):
+    """Verifies that a multi-axis tf.Tensor reduces all specified dimensions.
+
+    When `axes` is a 1-D `tf.Tensor` spanning all dimensions of the input,
+    both `weighted_mean` and `weighted_variance` are reduced to scalars.
+    This exercises the axes-normalization path with more than one axis.
+    """
+    x = constant_op.constant(
+        [[1.0, 2.0, 3.0], [4.0, 5.0, 6.0]], dtype=dtypes.float32)
+    w = constant_op.constant(1.0, dtype=dtypes.float32)
+
+    axes_tensor = constant_op.constant([0, 1], dtype=dtypes.int32)
+    mean, var = nn_impl.weighted_moments(
+        x, axes_tensor, w, keep_dims=False)
+
+    expected_mean = 3.5
+    expected_var = (1 + 4 + 9 + 16 + 25 + 36) / 6.0 - 3.5 ** 2
+    self.assertAllEqual(mean.shape, [])
+    self.assertAllEqual(var.shape, [])
+    self.assertAllClose(mean, expected_mean)
+    self.assertAllClose(var, expected_var)
+
   def testAllZeroMasks(self):
     x = np.random.normal(size=[8, 3, 4]).astype(np.float32)
     weights = np.zeros(shape=[8, 3, 1]).astype(np.float32)
