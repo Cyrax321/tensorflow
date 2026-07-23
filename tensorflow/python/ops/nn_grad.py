@@ -978,6 +978,7 @@ def _TopKGrad(op: ops.Operation, grad, _):
   """
   in_shape = array_ops.shape(op.inputs[0])
   ind_shape = array_ops.shape(op.outputs[1])
+  ind_dtype = op.outputs[1].dtype
 
   # int32 is not supported on GPU hence up-casting
   ind_lastdim = array_ops.gather(
@@ -997,7 +998,7 @@ def _TopKGrad(op: ops.Operation, grad, _):
           array_ops.expand_dims(
               math_ops.range(0,
                              math_ops.cast(outerdim, dtypes.int64) * in_lastdim,
-                             in_lastdim), -1), dtypes.int32), [-1])
+                             in_lastdim), -1), ind_dtype), [-1])
 
   # Substitute grad to appropriate locations and fill the rest with zeros,
   # finally reshaping it to the original input shape.
@@ -1006,7 +1007,7 @@ def _TopKGrad(op: ops.Operation, grad, _):
           array_ops.scatter_nd(
               array_ops.expand_dims(ind, -1), array_ops.reshape(grad, [-1]),
               [math_ops.reduce_prod(in_shape)]), in_shape),
-      array_ops.zeros([], dtype=dtypes.int32)
+      array_ops.zeros([], dtype=ind_dtype)
   ]
 
 
